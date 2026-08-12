@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -6,10 +7,11 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 import {
@@ -238,4 +240,15 @@ test("CLI defaults to install and rejects extra arguments", (t) => {
     () => main(["install", "extra"], { home, run: runner.run, write: () => {} }),
     /Usage:/,
   );
+});
+
+test("npm-style bin symlink launches the CLI", (t) => {
+  const directory = temporaryHome(t);
+  const link = join(directory, "doodle-mcp");
+  symlinkSync(resolve("bin/doodle-mcp.mjs"), link);
+
+  const result = spawnSync(process.execPath, [link, "doctor"], { encoding: "utf8" });
+
+  assert.match(result.stdout, /^Codex:/m);
+  assert.match(result.stdout, /^Cursor:/m);
 });

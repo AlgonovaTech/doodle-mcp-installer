@@ -1,13 +1,13 @@
 {
   "name": "doodle-mcp-installer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Configure Doodle as a remote MCP server.",
   "type": "module",
   "bin": {
     "doodle-mcp": "bin/doodle-mcp.mjs"
   },
   "scripts": {
-    "test": "node --test"
+    "test": "node --test && python3 -m unittest discover -s test -p 'test_bridge.py'"
   },
   "engines": {
     "node": ">=18"

@@ -245,7 +245,7 @@ test("CLI defaults to install and rejects extra arguments", (t) => {
   );
 });
 
-test("install also configures auto-resume for detected Claude or Codex", (t) => {
+test("install also configures completion notifications for detected Claude or Codex", (t) => {
   const home = temporaryHome(t);
   const native = fakeRunner({ installed: ["codex"] });
   const calls = [];
@@ -266,7 +266,7 @@ test("install also configures auto-resume for detected Claude or Codex", (t) => 
         command === join(home, ".local", "bin", "doodle-resume-bridge") && args[0] === "login",
     ),
   );
-  assert.match(lines.join("\n"), /^Resume: configured$/m);
+  assert.match(lines.join("\n"), /^Notification: configured$/m);
 });
 
 test("resume install uses the bundled bridge without a shell", (t) => {
@@ -309,4 +309,13 @@ test("npm-style bin symlink launches the CLI", (t) => {
 
   assert.match(result.stdout, /^Codex:/m);
   assert.match(result.stdout, /^Cursor:/m);
+});
+
+test("README documents event-driven completion notification without GUI auto-resume", () => {
+  const readme = readFileSync(resolve("README.md"), "utf8");
+
+  assert.match(readme, /completion notification/i);
+  assert.match(readme, /notify-test --client codex/);
+  assert.match(readme, /clipboard/i);
+  assert.doesNotMatch(readme, /resumes the original session/i);
 });

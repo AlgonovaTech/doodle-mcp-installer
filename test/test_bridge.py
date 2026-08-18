@@ -18,11 +18,11 @@ import doodle_resume_bridge as bridge  # noqa: E402
 from doodle_resume_bridge import (  # noqa: E402
     BridgeState,
     Registration,
+    _retrieval_command,
     _validated_base_url,
-    build_resume_argv,
     install_hook,
+    notify_completion,
     parse_hook_payload,
-    run_resume,
     uninstall_hook,
 )
 
@@ -31,6 +31,63 @@ SESSION_ID = "11111111-2222-4333-8444-555555555555"
 
 
 class BridgeTests(unittest.TestCase):
+    def test_retrieval_command_contains_exact_run_id(self):
+        self.assertEqual(
+            _retrieval_command(RUN_ID),
+            f"Получи результат Doodle run {RUN_ID}. Вызови get_doodle_result("
+            f'run_id="{RUN_ID}", wait_seconds=0) и не запускай новый run.',
+        )
+
+    def test_macos_notification_copies_command_then_notifies(self):
+        registration = Registration(RUN_ID, "codex", SESSION_ID, "/workspace/project")
+        completed = SimpleNamespace(returncode=0)
+
+        with patch.object(bridge.subprocess, "run", return_value=completed) as run:
+            notify_completion(registration, platform="darwin")
+
+        self.assertEqual(len(run.call_args_list), 2)
+        clipboard, notification = run.call_args_list
+        self.assertEqual(clipboard.args[0], ["pbcopy"])
+        self.assertEqual(clipboard.kwargs["input"], _retrieval_command(RUN_ID))
+        self.assertTrue(clipboard.kwargs["text"])
+        self.assertFalse(clipboard.kwargs["check"])
+        self.assertEqual(notification.args[0][:2], ["osascript", "-e"])
+        self.assertIn(RUN_ID, notification.args[0][2])
+        self.assertIn("Codex", notification.args[0][2])
+        for call in run.call_args_list:
+            self.assertNotIn("shell", call.kwargs)
+
+    def test_notification_rejects_unsupported_platform(self):
+        registration = Registration(RUN_ID, "codex", SESSION_ID, "/workspace/project")
+        with (
+            patch.object(bridge.subprocess, "run") as run,
+            self.assertRaisesRegex(RuntimeError, "macOS"),
+        ):
+            notify_completion(registration, platform="linux")
+        run.assert_not_called()
+
+    def test_unsupported_platform_hook_keeps_normal_monitor(self):
+        payload = {
+            "session_id": SESSION_ID,
+            "cwd": "/workspace/project",
+            "tool_name": "mcp__doodle__talk_to_doodle",
+            "tool_response": {"status": "running", "run_id": RUN_ID},
+        }
+        stdin = SimpleNamespace(buffer=io.BytesIO(json.dumps(payload).encode()))
+        output = io.StringIO()
+
+        with (
+            patch.object(bridge.sys, "platform", "linux"),
+            patch.object(bridge.sys, "stdin", stdin),
+            patch.object(bridge, "BridgeState") as state,
+            patch("sys.stdout", output),
+        ):
+            result = bridge.hook("codex", "https://mcp.example.com")
+
+        self.assertEqual(result, 0)
+        state.assert_not_called()
+        self.assertIn("normal get_doodle_result monitor", output.getvalue())
+
     def test_mac_python_falls_back_to_system_ca_bundle(self):
         with (
             patch.object(bridge.sys, "platform", "darwin"),
@@ -146,14 +203,6 @@ class BridgeTests(unittest.TestCase):
         )
         self.assertIsNone(parse_hook_payload("claude", {**base, "session_id": "not-a-uuid"}))
 
-    def test_resume_argv_uses_native_commands_without_shell(self):
-        claude = build_resume_argv("claude", "/opt/Claude Code/claude", SESSION_ID, RUN_ID)
-        codex = build_resume_argv("codex", "/opt/Codex/codex", SESSION_ID, RUN_ID)
-        self.assertEqual(claude[:4], ["/opt/Claude Code/claude", "--print", "--resume", SESSION_ID])
-        self.assertEqual(codex[:4], ["/opt/Codex/codex", "exec", "resume", SESSION_ID])
-        self.assertIn(RUN_ID, claude[-1])
-        self.assertIn("wait_seconds=0", codex[-1])
-
     def test_bridge_state_claims_each_registration_once(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state.sqlite3"
@@ -168,24 +217,58 @@ class BridgeTests(unittest.TestCase):
                 row = conn.execute("SELECT state FROM registrations").fetchone()
             self.assertEqual(row, ("claimed",))
 
-    def test_resume_executes_fake_client_once_with_argv(self):
+    def test_bridge_marks_notification_delivery(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            output = root / "argv.json"
-            fake = root / "fake-client"
-            fake.write_text(
-                "#!/usr/bin/env python3\n"
-                "import json, os, sys\n"
-                "open(os.environ['BRIDGE_TEST_OUTPUT'], 'w').write(json.dumps(sys.argv[1:]))\n"
-            )
-            fake.chmod(0o700)
-            result = run_resume(
-                Registration(RUN_ID, "codex", SESSION_ID, str(root)),
-                binary=str(fake),
-                env={**os.environ, "BRIDGE_TEST_OUTPUT": str(output)},
-            )
-            self.assertEqual(result, 0)
-            self.assertEqual(json.loads(output.read_text())[:3], ["exec", "resume", SESSION_ID])
+            path = Path(directory) / "state.sqlite3"
+            state = BridgeState(path)
+            registration = Registration(RUN_ID, "codex", SESSION_ID, "/workspace/project")
+            self.assertTrue(state.register(registration))
+            self.assertTrue(state.claim(registration))
+
+            state.notified(registration)
+
+            with sqlite3.connect(path) as conn:
+                row = conn.execute("SELECT state FROM registrations").fetchone()
+            self.assertEqual(row, ("notified",))
+            self.assertEqual(state.summary(), [("notified", 1)])
+
+    def test_notify_test_uses_local_delivery(self):
+        with (
+            patch.object(bridge, "notify_completion") as notify,
+            patch("builtins.print") as output,
+        ):
+            result = bridge.main(["notify-test", "--client", "codex"])
+
+        self.assertEqual(result, 0)
+        registration = notify.call_args.args[0]
+        self.assertEqual(registration.client, "codex")
+        self.assertEqual(registration.run_id, "notification_test")
+        output.assert_called_once_with("Doodle completion notification sent")
+
+    def test_watch_notifies_without_launching_client(self):
+        registration = Registration(RUN_ID, "codex", SESSION_ID, "/workspace/project")
+        state = SimpleNamespace(
+            mark_listening=lambda *_args: None,
+            claim=lambda *_args: True,
+            notified=lambda *_args: None,
+            failed=lambda *_args: None,
+        )
+        terminal = {
+            "method": "notifications/tasks",
+            "params": {"taskId": RUN_ID, "status": "completed"},
+        }
+        with (
+            patch.object(bridge, "BridgeState", return_value=state),
+            patch.object(bridge, "_access_token", return_value="token"),
+            patch.object(bridge, "_subscription_messages", return_value=iter([terminal])),
+            patch.object(bridge, "notify_completion") as notify,
+            patch.object(bridge.shutil, "which") as which,
+        ):
+            result = bridge.watch(registration, "https://mcp.example.com")
+
+        self.assertEqual(result, 0)
+        notify.assert_called_once_with(registration)
+        which.assert_not_called()
 
     def test_hook_install_is_idempotent_and_preserves_existing_hooks(self):
         with tempfile.TemporaryDirectory() as directory:

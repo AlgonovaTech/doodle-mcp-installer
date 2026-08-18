@@ -58,6 +58,31 @@ class BridgeTests(unittest.TestCase):
 
         self.assertEqual(captured["user_agent"], "doodle-resume-bridge/0.2.0")
 
+    def test_teleport_token_does_not_require_a_refresh_token(self):
+        credentials = bridge._credential_values(
+            "client-id",
+            {"access_token": "access-token", "expires_in": 7200},
+            now=100,
+        )
+
+        self.assertEqual(credentials["refresh_token"], "")
+        self.assertEqual(credentials["expires_at"], 7300)
+
+    def test_expired_teleport_token_requires_new_login(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = BridgeState(Path(directory) / "state.sqlite3")
+            state.set_credentials(
+                {
+                    "client_id": "client-id",
+                    "access_token": "access-token",
+                    "refresh_token": "",
+                    "expires_at": 0,
+                }
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "login expired"):
+                bridge._access_token(state, "https://mcp.example.com")
+
     def test_accepts_only_https_server_origins(self):
         self.assertEqual(_validated_base_url("https://mcp.example.com/"), "https://mcp.example.com")
         for unsafe in (

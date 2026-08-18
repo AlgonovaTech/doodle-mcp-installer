@@ -12,6 +12,7 @@ import secrets
 import shlex
 import shutil
 import sqlite3
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -37,6 +38,18 @@ DOODLE_TOOLS = {
 }
 TERMINAL_STATES = {"completed", "failed", "cancelled"}
 HOOK_MARKER = "doodle-resume-bridge hook --client"
+USER_AGENT = "doodle-resume-bridge/0.2.0"
+
+
+def _ssl_context() -> ssl.SSLContext:
+    system_ca = Path("/etc/ssl/cert.pem")
+    if (
+        sys.platform == "darwin"
+        and ssl.get_default_verify_paths().cafile is None
+        and system_ca.is_file()
+    ):
+        return ssl.create_default_context(cafile=str(system_ca))
+    return ssl.create_default_context()
 
 
 @dataclass(frozen=True)
@@ -387,10 +400,16 @@ def _request_json(url: str, body: dict[str, Any]) -> dict[str, Any]:
     request = urllib.request.Request(  # noqa: S310 - caller validates HTTPS base URL
         url,
         data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": USER_AGENT,
+        },
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
+    with urllib.request.urlopen(  # noqa: S310
+        request, timeout=30, context=_ssl_context()
+    ) as response:
         result = json.load(response)
     if not isinstance(result, dict):
         raise RuntimeError("invalid OAuth response")
@@ -401,10 +420,15 @@ def _request_form(url: str, body: dict[str, str]) -> dict[str, Any]:
     request = urllib.request.Request(  # noqa: S310 - caller validates HTTPS base URL
         url,
         data=urllib.parse.urlencode(body).encode(),
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": USER_AGENT,
+        },
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
+    with urllib.request.urlopen(  # noqa: S310
+        request, timeout=30, context=_ssl_context()
+    ) as response:
         result = json.load(response)
     if not isinstance(result, dict):
         raise RuntimeError("invalid OAuth response")
@@ -563,10 +587,13 @@ def _subscription_messages(base_url: str, token: str, run_id: str):
             "Content-Type": "application/json",
             "MCP-Protocol-Version": PROTOCOL_VERSION,
             "Mcp-Method": "subscriptions/listen",
+            "User-Agent": USER_AGENT,
         },
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=90) as response:  # noqa: S310
+    with urllib.request.urlopen(  # noqa: S310
+        request, timeout=90, context=_ssl_context()
+    ) as response:
         for raw in response:
             line = raw.decode("utf-8", errors="strict").rstrip("\r\n")
             if not line.startswith("data: "):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import sqlite3
@@ -8,9 +9,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bridge"))
 
+import doodle_resume_bridge as bridge  # noqa: E402
 from doodle_resume_bridge import (  # noqa: E402
     BridgeState,
     Registration,
@@ -27,6 +31,33 @@ SESSION_ID = "11111111-2222-4333-8444-555555555555"
 
 
 class BridgeTests(unittest.TestCase):
+    def test_mac_python_falls_back_to_system_ca_bundle(self):
+        with (
+            patch.object(bridge.sys, "platform", "darwin"),
+            patch.object(
+                bridge.ssl,
+                "get_default_verify_paths",
+                return_value=SimpleNamespace(cafile=None),
+            ),
+            patch.object(bridge.Path, "is_file", return_value=True),
+            patch.object(bridge.ssl, "create_default_context") as create_context,
+        ):
+            bridge._ssl_context()
+
+        create_context.assert_called_once_with(cafile="/etc/ssl/cert.pem")
+
+    def test_oauth_requests_identify_the_bridge(self):
+        captured = {}
+
+        def open_request(request, **_kwargs):
+            captured["user_agent"] = request.get_header("User-agent")
+            return io.BytesIO(b"{}")
+
+        with patch.object(bridge.urllib.request, "urlopen", side_effect=open_request):
+            bridge._request_json("https://mcp.example.com/oauth/register", {})
+
+        self.assertEqual(captured["user_agent"], "doodle-resume-bridge/0.2.0")
+
     def test_accepts_only_https_server_origins(self):
         self.assertEqual(_validated_base_url("https://mcp.example.com/"), "https://mcp.example.com")
         for unsafe in (

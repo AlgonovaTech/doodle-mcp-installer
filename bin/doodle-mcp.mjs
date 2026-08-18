@@ -16,7 +16,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const ENDPOINT = "https://mcp.algodoodle.me/mcp";
 
-const LABELS = { codex: "Codex", claude: "Claude Code", cursor: "Cursor", resume: "Resume" };
+const LABELS = {
+  codex: "Codex",
+  claude: "Claude Code",
+  cursor: "Cursor",
+  resume: "Notification",
+};
 const BRIDGE_SOURCE = fileURLToPath(
   new URL("../bridge/doodle_resume_bridge.py", import.meta.url),
 );
@@ -212,10 +217,13 @@ function bridgeEnv(home) {
 export function installResume({ home = homedir(), run = defaultRun } = {}) {
   requireSuccess(
     run("python3", [BRIDGE_SOURCE, "install-hooks"], { env: bridgeEnv(home) }),
-    "resume bridge",
+    "notification bridge",
   );
   if (doctorResume({ home, run }).resume !== "configured") {
-    requireSuccess(run(bridgePath(home), ["login"], { env: bridgeEnv(home) }), "resume bridge");
+    requireSuccess(
+      run(bridgePath(home), ["login"], { env: bridgeEnv(home) }),
+      "notification bridge",
+    );
   }
   return { resume: "configured" };
 }
@@ -233,7 +241,7 @@ export function uninstallResume({ home = homedir(), run = defaultRun } = {}) {
   if (!existsSync(executable)) return { resume: "missing" };
   requireSuccess(
     run(executable, ["uninstall-hooks"], { env: bridgeEnv(home) }),
-    "resume bridge",
+    "notification bridge",
   );
   return { resume: "removed" };
 }

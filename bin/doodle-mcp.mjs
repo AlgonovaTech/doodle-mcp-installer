@@ -214,7 +214,9 @@ export function installResume({ home = homedir(), run = defaultRun } = {}) {
     run("python3", [BRIDGE_SOURCE, "install-hooks"], { env: bridgeEnv(home) }),
     "resume bridge",
   );
-  requireSuccess(run(bridgePath(home), ["login"], { env: bridgeEnv(home) }), "resume bridge");
+  if (doctorResume({ home, run }).resume !== "configured") {
+    requireSuccess(run(bridgePath(home), ["login"], { env: bridgeEnv(home) }), "resume bridge");
+  }
   return { resume: "configured" };
 }
 
@@ -260,6 +262,12 @@ export function main(
   }
 
   const status = operations[command]({ home, run });
+  if (
+    command === "install" &&
+    [status.codex, status.claude].some((value) => value === "configured" || value === "unchanged")
+  ) {
+    Object.assign(status, installResume({ home, run }));
+  }
   printStatus(status, write);
   if (command === "install") write("Authentication opens in your client browser on first use.");
   if (command === "resume-install") {

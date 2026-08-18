@@ -449,6 +449,22 @@ def _validated_base_url(value: str) -> str:
     return value.rstrip("/")
 
 
+def _credential_values(
+    client_id: str, token: dict[str, Any], *, now: int | None = None
+) -> dict[str, Any]:
+    access_token = token.get("access_token")
+    refresh_token = token.get("refresh_token") or ""
+    if not isinstance(access_token, str) or not isinstance(refresh_token, str):
+        raise RuntimeError("invalid OAuth token response")
+    issued_at = int(time.time()) if now is None else now
+    return {
+        "client_id": client_id,
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "expires_at": issued_at + int(token.get("expires_in", 900)),
+    }
+
+
 def oauth_login(state: BridgeState, base_url: str) -> None:
     base = _validated_base_url(base_url)
     resource = f"{base}/mcp"
@@ -522,16 +538,7 @@ def oauth_login(state: BridgeState, base_url: str) -> None:
             "resource": resource,
         },
     )
-    if not isinstance(token.get("refresh_token"), str):
-        raise RuntimeError("OAuth server did not issue offline access")
-    state.set_credentials(
-        {
-            "client_id": client_id,
-            "access_token": token["access_token"],
-            "refresh_token": token["refresh_token"],
-            "expires_at": int(time.time()) + int(token.get("expires_in", 900)),
-        }
-    )
+    state.set_credentials(_credential_values(client_id, token))
 
 
 def _access_token(state: BridgeState, base_url: str, *, force_refresh: bool = False) -> str:
@@ -540,23 +547,24 @@ def _access_token(state: BridgeState, base_url: str, *, force_refresh: bool = Fa
         raise RuntimeError("run `doodle-resume-bridge login` first")
     if not force_refresh and int(credentials["expires_at"]) > int(time.time()) + 60:
         return str(credentials["access_token"])
+    refresh_token = str(credentials["refresh_token"])
+    if not refresh_token:
+        raise RuntimeError("OAuth login expired; run `doodle-resume-bridge login` again")
     base = _validated_base_url(base_url)
     token = _request_form(
         f"{base}/oauth/token",
         {
             "grant_type": "refresh_token",
-            "refresh_token": str(credentials["refresh_token"]),
+            "refresh_token": refresh_token,
             "client_id": str(credentials["client_id"]),
             "resource": f"{base}/mcp",
         },
     )
     state.set_credentials(
-        {
-            "client_id": credentials["client_id"],
-            "access_token": token["access_token"],
-            "refresh_token": token.get("refresh_token") or credentials["refresh_token"],
-            "expires_at": int(time.time()) + int(token.get("expires_in", 900)),
-        }
+        _credential_values(
+            str(credentials["client_id"]),
+            {**token, "refresh_token": token.get("refresh_token") or refresh_token},
+        )
     )
     return str(token["access_token"])
 

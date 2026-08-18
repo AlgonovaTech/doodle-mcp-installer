@@ -18,9 +18,11 @@ import doodle_resume_bridge as bridge  # noqa: E402
 from doodle_resume_bridge import (  # noqa: E402
     BridgeState,
     Registration,
+    _retrieval_command,
     _validated_base_url,
     build_resume_argv,
     install_hook,
+    notify_completion,
     parse_hook_payload,
     run_resume,
     uninstall_hook,
@@ -31,6 +33,41 @@ SESSION_ID = "11111111-2222-4333-8444-555555555555"
 
 
 class BridgeTests(unittest.TestCase):
+    def test_retrieval_command_contains_exact_run_id(self):
+        self.assertEqual(
+            _retrieval_command(RUN_ID),
+            f"Получи результат Doodle run {RUN_ID}. Вызови get_doodle_result("
+            f'run_id="{RUN_ID}", wait_seconds=0) и не запускай новый run.',
+        )
+
+    def test_macos_notification_copies_command_then_notifies(self):
+        registration = Registration(RUN_ID, "codex", SESSION_ID, "/workspace/project")
+        completed = SimpleNamespace(returncode=0)
+
+        with patch.object(bridge.subprocess, "run", return_value=completed) as run:
+            notify_completion(registration, platform="darwin")
+
+        self.assertEqual(len(run.call_args_list), 2)
+        clipboard, notification = run.call_args_list
+        self.assertEqual(clipboard.args[0], ["pbcopy"])
+        self.assertEqual(clipboard.kwargs["input"], _retrieval_command(RUN_ID))
+        self.assertTrue(clipboard.kwargs["text"])
+        self.assertFalse(clipboard.kwargs["check"])
+        self.assertEqual(notification.args[0][:2], ["osascript", "-e"])
+        self.assertIn(RUN_ID, notification.args[0][2])
+        self.assertIn("Codex", notification.args[0][2])
+        for call in run.call_args_list:
+            self.assertNotIn("shell", call.kwargs)
+
+    def test_notification_rejects_unsupported_platform(self):
+        registration = Registration(RUN_ID, "codex", SESSION_ID, "/workspace/project")
+        with (
+            patch.object(bridge.subprocess, "run") as run,
+            self.assertRaisesRegex(RuntimeError, "macOS"),
+        ):
+            notify_completion(registration, platform="linux")
+        run.assert_not_called()
+
     def test_mac_python_falls_back_to_system_ca_bundle(self):
         with (
             patch.object(bridge.sys, "platform", "darwin"),

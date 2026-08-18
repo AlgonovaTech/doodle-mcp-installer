@@ -279,6 +279,44 @@ def parse_hook_payload(client: str, payload: dict[str, Any]) -> Registration | N
     return Registration(run_id, client, str(session_id), cwd)
 
 
+def _retrieval_command(run_id: str) -> str:
+    return (
+        f"Получи результат Doodle run {run_id}. Вызови get_doodle_result("
+        f'run_id="{run_id}", wait_seconds=0) и не запускай новый run.'
+    )
+
+
+def notify_completion(registration: Registration, *, platform: str = sys.platform) -> None:
+    if platform != "darwin":
+        raise RuntimeError("completion notifications currently require macOS")
+    copied = subprocess.run(  # noqa: S603 - fixed system executable and argv
+        ["pbcopy"],
+        input=_retrieval_command(registration.run_id),
+        text=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=10,
+        check=False,
+    )
+    if copied.returncode != 0:
+        raise RuntimeError(f"pbcopy exited with {copied.returncode}")
+    client_name = "Claude" if registration.client == "claude" else "Codex"
+    script = (
+        f'display notification "Doodle run {registration.run_id} завершён. '
+        f'Команда скопирована." with title "Doodle Bridge" subtitle "{client_name}"'
+    )
+    notified = subprocess.run(  # noqa: S603 - fixed system executable and argv
+        ["osascript", "-e", script],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=10,
+        check=False,
+    )
+    if notified.returncode != 0:
+        raise RuntimeError(f"osascript exited with {notified.returncode}")
+
+
 def _resume_prompt(run_id: str) -> str:
     return (
         f'Doodle run {run_id} завершён. Вызови только get_doodle_result(run_id="{run_id}", '

@@ -245,6 +245,30 @@ test("CLI defaults to install and rejects extra arguments", (t) => {
   );
 });
 
+test("install also configures auto-resume for detected Claude or Codex", (t) => {
+  const home = temporaryHome(t);
+  const native = fakeRunner({ installed: ["codex"] });
+  const calls = [];
+  const run = (command, args, options = {}) => {
+    calls.push({ command, args: [...args], home: options.env?.HOME });
+    if (command === "python3" || command === join(home, ".local", "bin", "doodle-resume-bridge")) {
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    return native.run(command, args, options);
+  };
+  const lines = [];
+
+  assert.equal(main(["install"], { home, run, write: (line) => lines.push(line) }), 0);
+  assert.ok(calls.some(({ command, args }) => command === "python3" && args.at(-1) === "install-hooks"));
+  assert.ok(
+    calls.some(
+      ({ command, args }) =>
+        command === join(home, ".local", "bin", "doodle-resume-bridge") && args[0] === "login",
+    ),
+  );
+  assert.match(lines.join("\n"), /^Resume: configured$/m);
+});
+
 test("resume install uses the bundled bridge without a shell", (t) => {
   const home = temporaryHome(t);
   const calls = [];

@@ -142,8 +142,8 @@ class BridgeState:
             )
         return cursor.rowcount == 1
 
-    def delivered(self, registration: Registration) -> None:
-        self._set_state(registration, "delivered", None)
+    def notified(self, registration: Registration) -> None:
+        self._set_state(registration, "notified", None)
 
     def failed(self, registration: Registration, error: str) -> None:
         self._set_state(registration, "error", error[:300])
@@ -317,45 +317,6 @@ def notify_completion(registration: Registration, *, platform: str = sys.platfor
         raise RuntimeError(f"osascript exited with {notified.returncode}")
 
 
-def _resume_prompt(run_id: str) -> str:
-    return (
-        f'Doodle run {run_id} завершён. Вызови только get_doodle_result(run_id="{run_id}", '
-        "wait_seconds=0), не запускай новый Doodle run. Покажи пользователю verbatim_markdown "
-        "без изменений и затем, только если нужно, добавь отдельный краткий вывод."
-    )
-
-
-def build_resume_argv(client: str, binary: str, session_id: str, run_id: str) -> list[str]:
-    prompt = _resume_prompt(run_id)
-    if client == "claude":
-        return [binary, "--print", "--resume", session_id, prompt]
-    if client == "codex":
-        return [binary, "exec", "resume", session_id, prompt]
-    raise ValueError("unsupported client")
-
-
-def run_resume(
-    registration: Registration,
-    *,
-    binary: str,
-    env: dict[str, str] | None = None,
-    output=None,
-) -> int:
-    completed = subprocess.run(  # noqa: S603 - fixed argv, executable resolved by the user
-        build_resume_argv(
-            registration.client, binary, registration.session_id, registration.run_id
-        ),
-        cwd=registration.cwd,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=output if output is not None else subprocess.DEVNULL,
-        stderr=subprocess.STDOUT,
-        timeout=1800,
-        check=False,
-    )
-    return completed.returncode
-
-
 def _atomic_json(path: Path, body: dict[str, Any]) -> None:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     existing_mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
@@ -383,7 +344,7 @@ def _hook_entry(client: str, executable: str) -> dict[str, Any]:
                 "type": "command",
                 "command": command,
                 "timeout": 5,
-                "statusMessage": "Registering Doodle auto-resume",
+                "statusMessage": "Registering Doodle completion notification",
             }
         ],
     }
@@ -537,7 +498,7 @@ def oauth_login(state: BridgeState, base_url: str) -> None:
             "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
             "scope": "mcp:consult offline_access",
-            "client_name": "Doodle resume bridge",
+            "client_name": "Doodle notification bridge",
         },
     )
     client_id = client.get("client_id")
@@ -677,22 +638,9 @@ def watch(registration: Registration, base_url: str) -> int:
                     continue
                 if not state.claim(registration):
                     return 0
-                env_name = (
-                    "DOODLE_CLAUDE_BIN" if registration.client == "claude" else "DOODLE_CODEX_BIN"
-                )
-                binary = os.environ.get(env_name) or shutil.which(registration.client)
-                if not binary:
-                    state.failed(registration, f"{registration.client} executable not found")
-                    return 1
-                with _log_path().open("a", encoding="utf-8") as output:
-                    return_code = run_resume(
-                        registration, binary=binary, env=dict(os.environ), output=output
-                    )
-                if return_code == 0:
-                    state.delivered(registration)
-                    return 0
-                state.failed(registration, f"resume exited with {return_code}")
-                return return_code
+                notify_completion(registration)
+                state.notified(registration)
+                return 0
             delay = 2.0
         except urllib.error.HTTPError as exc:
             if exc.code == 401:
@@ -757,14 +705,14 @@ def hook(client: str, base_url: str) -> int:
     state = BridgeState()
     if state.credentials() is None:
         _hook_context(
-            "Doodle resume bridge needs login; continue with normal get_doodle_result polling."
+            "Doodle notification bridge needs login; retrieve this result manually."
         )
         return 0
     if state.register(registration):
         _spawn_watcher(registration, base_url)
     _hook_context(
-        "Doodle auto-resume is registered for this run. End this turn without polling; "
-        "the bridge will resume this same session when Doodle finishes."
+        "Doodle completion notification is registered. End this turn without polling; "
+        "the bridge will copy the retrieval command when Doodle finishes."
     )
     return 0
 
@@ -810,7 +758,7 @@ def _registration_from_args(args) -> Registration:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Doodle MCP auto-resume bridge")
+    parser = argparse.ArgumentParser(description="Doodle MCP completion notification bridge")
     subparsers = parser.add_subparsers(dest="command", required=True)
     login_parser = subparsers.add_parser("login")
     login_parser.add_argument(
@@ -819,6 +767,8 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("install-hooks")
     subparsers.add_parser("uninstall-hooks")
     subparsers.add_parser("status")
+    notify_parser = subparsers.add_parser("notify-test")
+    notify_parser.add_argument("--client", choices=("claude", "codex"), required=True)
     hook_parser = subparsers.add_parser("hook")
     hook_parser.add_argument("--client", choices=("claude", "codex"), required=True)
     hook_parser.add_argument(
@@ -836,7 +786,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "login":
         oauth_login(BridgeState(), args.base_url)
-        print("Doodle resume bridge authenticated")
+        print("Doodle notification bridge authenticated")
         return 0
     if args.command == "install-hooks":
         destination = install()
@@ -852,6 +802,12 @@ def main(argv: list[str] | None = None) -> int:
         auth = "authenticated" if state.credentials() else "login required"
         summary = ", ".join(f"{name}={count}" for name, count in state.summary()) or "no runs"
         print(f"{auth}; {summary}")
+        return 0
+    if args.command == "notify-test":
+        notify_completion(
+            Registration("notification_test", args.client, str(uuid.uuid4()), str(Path.cwd()))
+        )
+        print("Doodle completion notification sent")
         return 0
     if args.command == "hook":
         return hook(args.client, args.base_url)

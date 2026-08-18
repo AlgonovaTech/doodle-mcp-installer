@@ -66,6 +66,28 @@ class BridgeTests(unittest.TestCase):
             notify_completion(registration, platform="linux")
         run.assert_not_called()
 
+    def test_unsupported_platform_hook_keeps_normal_monitor(self):
+        payload = {
+            "session_id": SESSION_ID,
+            "cwd": "/workspace/project",
+            "tool_name": "mcp__doodle__talk_to_doodle",
+            "tool_response": {"status": "running", "run_id": RUN_ID},
+        }
+        stdin = SimpleNamespace(buffer=io.BytesIO(json.dumps(payload).encode()))
+        output = io.StringIO()
+
+        with (
+            patch.object(bridge.sys, "platform", "linux"),
+            patch.object(bridge.sys, "stdin", stdin),
+            patch.object(bridge, "BridgeState") as state,
+            patch("sys.stdout", output),
+        ):
+            result = bridge.hook("codex", "https://mcp.example.com")
+
+        self.assertEqual(result, 0)
+        state.assert_not_called()
+        self.assertIn("normal get_doodle_result monitor", output.getvalue())
+
     def test_mac_python_falls_back_to_system_ca_bundle(self):
         with (
             patch.object(bridge.sys, "platform", "darwin"),

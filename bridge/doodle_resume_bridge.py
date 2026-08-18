@@ -702,6 +702,12 @@ def hook(client: str, base_url: str) -> int:
     registration = parse_hook_payload(client, payload)
     if registration is None:
         return 0
+    if sys.platform != "darwin":
+        _hook_context(
+            "Doodle completion notifications currently require macOS; continue with the "
+            "normal get_doodle_result monitor for this run."
+        )
+        return 0
     state = BridgeState()
     if state.credentials() is None:
         _hook_context(

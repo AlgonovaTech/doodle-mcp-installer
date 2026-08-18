@@ -17,9 +17,12 @@ import test from "node:test";
 import {
   ENDPOINT,
   doctorAll,
+  doctorResume,
   installAll,
+  installResume,
   main,
   uninstallAll,
+  uninstallResume,
 } from "../bin/doodle-mcp.mjs";
 
 function temporaryHome(t) {
@@ -240,6 +243,37 @@ test("CLI defaults to install and rejects extra arguments", (t) => {
     () => main(["install", "extra"], { home, run: runner.run, write: () => {} }),
     /Usage:/,
   );
+});
+
+test("resume install uses the bundled bridge without a shell", (t) => {
+  const home = temporaryHome(t);
+  const calls = [];
+  const run = (command, args, options) => {
+    calls.push({ command, args, home: options.env.HOME });
+    return { status: 0, stdout: "" };
+  };
+
+  assert.deepEqual(installResume({ home, run }), { resume: "configured" });
+  assert.equal(calls[0].command, "python3");
+  assert.match(calls[0].args[0], /bridge\/doodle_resume_bridge\.py$/);
+  assert.deepEqual(calls[0].args.slice(1), ["install-hooks"]);
+  assert.equal(calls[1].command, join(home, ".local", "bin", "doodle-resume-bridge"));
+  assert.deepEqual(calls[1].args, ["login"]);
+  assert.equal(calls.every((call) => call.home === home), true);
+});
+
+test("resume doctor and uninstall report only safe status", (t) => {
+  const home = temporaryHome(t);
+  const executable = join(home, ".local", "bin", "doodle-resume-bridge");
+  mkdirSync(dirname(executable), { recursive: true });
+  writeFileSync(executable, "placeholder");
+  const run = (_command, args) => ({
+    status: 0,
+    stdout: args[0] === "status" ? "authenticated; no runs\n" : "sensitive output",
+  });
+
+  assert.deepEqual(doctorResume({ home, run }), { resume: "configured" });
+  assert.deepEqual(uninstallResume({ home, run }), { resume: "removed" });
 });
 
 test("npm-style bin symlink launches the CLI", (t) => {

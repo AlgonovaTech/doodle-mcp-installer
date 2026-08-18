@@ -12,14 +12,17 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const ENDPOINT = "https://mcp.algodoodle.me/mcp";
 
-const LABELS = { codex: "Codex", claude: "Claude Code", cursor: "Cursor" };
+const LABELS = { codex: "Codex", claude: "Claude Code", cursor: "Cursor", resume: "Resume" };
+const BRIDGE_SOURCE = fileURLToPath(
+  new URL("../bridge/doodle_resume_bridge.py", import.meta.url),
+);
 
-function defaultRun(command, args) {
-  return spawnSync(command, args, { encoding: "utf8", shell: false });
+function defaultRun(command, args, options = {}) {
+  return spawnSync(command, args, { encoding: "utf8", shell: false, ...options });
 }
 
 function isObject(value) {
@@ -198,6 +201,41 @@ export function uninstallAll({ home = homedir(), run = defaultRun } = {}) {
   return status;
 }
 
+function bridgePath(home) {
+  return join(home, ".local", "bin", "doodle-resume-bridge");
+}
+
+function bridgeEnv(home) {
+  return { ...process.env, HOME: home };
+}
+
+export function installResume({ home = homedir(), run = defaultRun } = {}) {
+  requireSuccess(
+    run("python3", [BRIDGE_SOURCE, "install-hooks"], { env: bridgeEnv(home) }),
+    "resume bridge",
+  );
+  requireSuccess(run(bridgePath(home), ["login"], { env: bridgeEnv(home) }), "resume bridge");
+  return { resume: "configured" };
+}
+
+export function doctorResume({ home = homedir(), run = defaultRun } = {}) {
+  const executable = bridgePath(home);
+  if (!existsSync(executable)) return { resume: "missing" };
+  const result = run(executable, ["status"], { env: bridgeEnv(home) });
+  if (result.status !== 0) return { resume: "error" };
+  return { resume: /^authenticated(?:;|$)/.test(result.stdout) ? "configured" : "login_required" };
+}
+
+export function uninstallResume({ home = homedir(), run = defaultRun } = {}) {
+  const executable = bridgePath(home);
+  if (!existsSync(executable)) return { resume: "missing" };
+  requireSuccess(
+    run(executable, ["uninstall-hooks"], { env: bridgeEnv(home) }),
+    "resume bridge",
+  );
+  return { resume: "removed" };
+}
+
 function printStatus(status, write) {
   for (const [client, value] of Object.entries(status)) write(`${LABELS[client]}: ${value}`);
 }
@@ -207,15 +245,27 @@ export function main(
   { home = homedir(), run = defaultRun, write = (line) => console.log(line) } = {},
 ) {
   const command = argv[0] ?? "install";
-  if (argv.length > 1 || !["install", "doctor", "uninstall"].includes(command)) {
-    throw new Error("Usage: doodle-mcp [install|doctor|uninstall]");
+  const operations = {
+    install: installAll,
+    doctor: doctorAll,
+    uninstall: uninstallAll,
+    "resume-install": installResume,
+    "resume-doctor": doctorResume,
+    "resume-uninstall": uninstallResume,
+  };
+  if (argv.length > 1 || !(command in operations)) {
+    throw new Error(
+      "Usage: doodle-mcp [install|doctor|uninstall|resume-install|resume-doctor|resume-uninstall]",
+    );
   }
 
-  const operation = { install: installAll, doctor: doctorAll, uninstall: uninstallAll }[command];
-  const status = operation({ home, run });
+  const status = operations[command]({ home, run });
   printStatus(status, write);
   if (command === "install") write("Authentication opens in your client browser on first use.");
-  if (command !== "doctor") return 0;
+  if (command === "resume-install") {
+    write("Restart Claude/Codex; in Codex approve the user hook once with /hooks.");
+  }
+  if (!command.endsWith("doctor")) return 0;
   return Object.values(status).some((value) => ["configured"].includes(value)) &&
     !Object.values(status).some((value) => ["conflict", "invalid"].includes(value))
     ? 0

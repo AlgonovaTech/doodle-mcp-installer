@@ -8,6 +8,9 @@ notifications, adds the user-level hooks and opens the bridge OAuth login:
 npx --yes github:AlgonovaTech/doodle-mcp-installer install
 ```
 
+Before registering Doodle, the installer runs Claude Code's native updater to
+avoid MCP OAuth bugs fixed in current Claude releases.
+
 Commands:
 
 - `install`

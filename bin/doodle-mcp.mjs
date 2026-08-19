@@ -120,6 +120,10 @@ export function installAll({ home = homedir(), run = defaultRun } = {}) {
   }
   if (current.cursor === "conflict") throw new Error("Found a conflicting Cursor registration.");
 
+  if (current.claude !== "not_installed" && run("claude", ["update"]).status !== 0) {
+    throw new Error("Could not update Claude Code.");
+  }
+
   const status = { ...current };
   if (current.codex === "missing") {
     requireSuccess(

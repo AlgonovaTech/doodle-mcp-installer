@@ -46,7 +46,7 @@ function readCursor(home) {
   return JSON.parse(readFileSync(cursorPath(home), "utf8"));
 }
 
-function fakeRunner({ installed = ["codex", "claude"], codex, claude } = {}) {
+function fakeRunner({ installed = ["codex", "claude"], codex, claude, claudeUpdateStatus = 0 } = {}) {
   const calls = [];
   const state = { codex, claude };
 
@@ -58,6 +58,10 @@ function fakeRunner({ installed = ["codex", "claude"], codex, claude } = {}) {
     calls.push({ command, args: [...args] });
     if (args[0] === "--version") {
       return result(installed.includes(command) ? 0 : 127, `${command} version`);
+    }
+
+    if (command === "claude" && args[0] === "update") {
+      return result(claudeUpdateStatus);
     }
 
     if (command === "codex" && args.slice(0, 3).join(" ") === "mcp get doodle") {
@@ -128,6 +132,31 @@ test("install configures native clients and preserves unrelated Cursor entries",
         args.join(" ") === `mcp add --transport http --scope user doodle ${ENDPOINT}`,
     ),
   );
+});
+
+test("install updates Claude before registering Doodle", (t) => {
+  const home = temporaryHome(t);
+  const runner = fakeRunner({ installed: ["claude"] });
+
+  installAll({ home, run: runner.run });
+
+  const update = runner.calls.findIndex(
+    ({ command, args }) => command === "claude" && args[0] === "update",
+  );
+  const register = runner.calls.findIndex(
+    ({ command, args }) => command === "claude" && args.slice(0, 2).join(" ") === "mcp add",
+  );
+  assert.ok(update >= 0);
+  assert.ok(register > update);
+});
+
+test("install stops before configuration when Claude update fails", (t) => {
+  const home = temporaryHome(t);
+  const runner = fakeRunner({ installed: ["claude"], claudeUpdateStatus: 1 });
+
+  assert.throws(() => installAll({ home, run: runner.run }), /Could not update Claude Code/);
+  assert.equal(runner.calls.some(({ args }) => args[0] === "mcp" && args[1] === "add"), false);
+  assert.equal(existsSync(cursorPath(home)), false);
 });
 
 test("install is idempotent", (t) => {

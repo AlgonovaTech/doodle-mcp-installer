@@ -827,8 +827,8 @@ test("package validator pins schema, files, sizes, hashes, and runtime contract"
       sha256: "b52293ab99c3980d8e183136b37ffada9cefefa615d7f4e43fa7da87b3a59ba3",
     },
     "spritesheet.webp": {
-      size: 1800536,
-      sha256: "90f802458c1cf5b36d3eb6c5e4a55a4024e8c020f17b5a1dbcbbd5e79e527386",
+      size: 1797710,
+      sha256: "c772365724424790307c728ace7a8d4467721c48fbcd2fd447808f6a83d92e55",
     },
   });
   assert.doesNotThrow(() => installer.validatePetPackage(valid, TEST_EXPECTED_FILES));
@@ -893,6 +893,35 @@ test("pet lifecycle is conservative and Codex-only", (t) => {
   assert.equal(installer.uninstallPet({ home, expected: TEST_EXPECTED_FILES }), "removed");
   assert.equal(existsSync(join(directory, "pet.json")), false);
   assert.equal(existsSync(join(directory, "spritesheet.webp")), false);
+});
+
+test("pet upgrades the previous official package without accepting arbitrary files", (t) => {
+  const home = temporaryHome(t);
+  const directory = join(home, ".codex", "pets", "mr-doodle");
+  const previousSpritesheet = Buffer.from("previous-official-webp");
+  const previous = {
+    "pet.json": TEST_EXPECTED_FILES["pet.json"],
+    "spritesheet.webp": {
+      size: previousSpritesheet.length,
+      sha256: createHash("sha256").update(previousSpritesheet).digest("hex"),
+    },
+  };
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, "pet.json"), TEST_PET_JSON);
+  writeFileSync(join(directory, "spritesheet.webp"), previousSpritesheet);
+
+  assert.equal(
+    installer.installPet(testPetPackage(), {
+      home,
+      codexInstalled: true,
+      expected: TEST_EXPECTED_FILES,
+      previous: [previous],
+    }),
+    "updated",
+  );
+  assert.deepEqual(readFileSync(join(directory, "pet.json")), TEST_PET_JSON);
+  assert.deepEqual(readFileSync(join(directory, "spritesheet.webp")), TEST_SPRITESHEET);
+  assert.equal(installer.doctorPet({ home, expected: TEST_EXPECTED_FILES }), "configured");
 });
 
 test("pet conflicts stay byte-for-byte untouched", (t) => {

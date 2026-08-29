@@ -27,10 +27,19 @@ export const PET_FILES = Object.freeze({
     sha256: "b52293ab99c3980d8e183136b37ffada9cefefa615d7f4e43fa7da87b3a59ba3",
   }),
   "spritesheet.webp": Object.freeze({
-    size: 1800536,
-    sha256: "90f802458c1cf5b36d3eb6c5e4a55a4024e8c020f17b5a1dbcbbd5e79e527386",
+    size: 1797710,
+    sha256: "c772365724424790307c728ace7a8d4467721c48fbcd2fd447808f6a83d92e55",
   }),
 });
+const PREVIOUS_PET_FILES = Object.freeze([
+  Object.freeze({
+    "pet.json": PET_FILES["pet.json"],
+    "spritesheet.webp": Object.freeze({
+      size: 1800536,
+      sha256: "90f802458c1cf5b36d3eb6c5e4a55a4024e8c020f17b5a1dbcbbd5e79e527386",
+    }),
+  }),
+]);
 
 const LABELS = {
   codex: "Codex",
@@ -426,6 +435,18 @@ function exactPetFile(path, expected) {
   }
 }
 
+function exactPetPackage(directory, expected) {
+  try {
+    return (
+      readdirSync(directory).sort().join("\0") === "pet.json\0spritesheet.webp" &&
+      exactPetFile(join(directory, "pet.json"), expected["pet.json"]) &&
+      exactPetFile(join(directory, "spritesheet.webp"), expected["spritesheet.webp"])
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function doctorPet({
   home = homedir(),
   codexHome = process.env.CODEX_HOME,
@@ -436,23 +457,19 @@ export function doctorPet({
   if (!existsSync(directory)) return "missing";
   try {
     if (!lstatSync(directory).isDirectory()) return "conflict";
-    if (readdirSync(directory).sort().join("\0") !== "pet.json\0spritesheet.webp") {
-      return "conflict";
-    }
-    return exactPetFile(join(directory, "pet.json"), expected["pet.json"]) &&
-      exactPetFile(join(directory, "spritesheet.webp"), expected["spritesheet.webp"])
-      ? "configured"
-      : "conflict";
+    return exactPetPackage(directory, expected) ? "configured" : "conflict";
   } catch {
     return "conflict";
   }
 }
 
-function writePetFile(path, bytes) {
+function writePetFile(path, bytes, replace = false) {
   const temporary = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
   try {
     writeFileSync(temporary, bytes, { flag: "wx", mode: 0o600 });
-    if (existsSync(path)) throw new Error("Pet destination changed during installation.");
+    if (!replace && existsSync(path)) {
+      throw new Error("Pet destination changed during installation.");
+    }
     renameSync(temporary, path);
   } finally {
     if (existsSync(temporary)) unlinkSync(temporary);
@@ -466,14 +483,22 @@ export function installPet(
     codexHome = process.env.CODEX_HOME,
     codexInstalled,
     expected = PET_FILES,
+    previous = PREVIOUS_PET_FILES,
   } = {},
 ) {
   if (!codexInstalled) return "not_installed";
   validatePetPackage(pet, expected);
   const current = doctorPet({ home, codexHome, expected });
   if (current === "configured") return "unchanged";
-  if (current === "conflict") return "conflict";
   const { directory } = petPaths(home, codexHome);
+  if (current === "conflict") {
+    const isPreviousOfficial = previous.some((files) => exactPetPackage(directory, files));
+    if (!isPreviousOfficial || !readFileSync(join(directory, "pet.json")).equals(pet.petJson)) {
+      return "conflict";
+    }
+    writePetFile(join(directory, "spritesheet.webp"), pet.spritesheet, true);
+    return "updated";
+  }
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   writePetFile(join(directory, "spritesheet.webp"), pet.spritesheet);
   writePetFile(join(directory, "pet.json"), pet.petJson);

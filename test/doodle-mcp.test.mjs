@@ -355,7 +355,7 @@ test("CLI defaults to install and rejects extra arguments", async (t) => {
 
 test("install also configures completion notifications for detected Claude or Codex", async (t) => {
   const home = temporaryHome(t);
-  const native = fakeRunner({ installed: ["codex"] });
+  const native = fakeRunner({ installed: ["codex", "claude"] });
   const calls = [];
   const run = (command, args, options = {}) => {
     calls.push({ command, args: [...args], home: options.env?.HOME });
@@ -385,6 +385,11 @@ test("install also configures completion notifications for detected Claude or Co
     ),
   );
   assert.match(lines.join("\n"), /^Notification: configured$/m);
+  assert.match(
+    lines.join("\n"),
+    /codex mcp login doodle --scopes mcp:consult,mcp:delegate,offline_access/,
+  );
+  assert.match(lines.join("\n"), /claude mcp login doodle/);
 });
 
 test("resume install uses the bundled bridge without a shell", (t) => {
@@ -499,6 +504,15 @@ test("README documents event-driven completion notification without GUI auto-res
   assert.match(readme, /notify-test --client codex/);
   assert.match(readme, /clipboard/i);
   assert.doesNotMatch(readme, /resumes the original session/i);
+});
+
+test("README documents native OAuth login and the two access methods", () => {
+  const readme = readFileSync(resolve("README.md"), "utf8");
+
+  assert.match(readme, /codex mcp login doodle/);
+  assert.match(readme, /claude mcp login doodle/);
+  assert.match(readme, /Doodle Admin/);
+  assert.match(readme, /doodle-mcp-users/);
 });
 
 test("install rejects authorization before any local mutation", async (t) => {

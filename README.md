@@ -29,6 +29,22 @@ Commands:
 - `resume-doctor`
 - `resume-uninstall`
 
+## Authenticate each client
+
+Each native client keeps a separate OAuth session. After `install`, authenticate
+the detected clients from the terminal and keep the command running until the
+browser returns to localhost:
+
+```sh
+codex mcp login doodle --scopes mcp:consult,mcp:delegate,offline_access
+claude mcp login doodle
+```
+
+Use the login method assigned to you. A user created in Doodle Admin signs in
+with the generated Doodle username and password. Teleport/Google works only for
+members of the externally managed `doodle-mcp-users` group. The installer never
+reads or stores either credential.
+
 After installation, restart Claude/Codex and approve the new user-level
 `PostToolUse` hook once. In Codex, open `/hooks`; Claude shows
 the same user hook in its Hooks settings. The bridge uses

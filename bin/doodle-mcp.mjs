@@ -761,7 +761,17 @@ export async function main(
     Object.assign(status, installResume({ home, run }));
   }
   printStatus(status, write);
-  if (command === "install") write("Each MCP client keeps its own OAuth session for later use.");
+  if (command === "install") {
+    write("Each MCP client keeps its own OAuth session for later use.");
+    if (status.codex !== "not_installed") {
+      write(
+        "Authenticate Codex: codex mcp login doodle --scopes mcp:consult,mcp:delegate,offline_access",
+      );
+    }
+    if (status.claude !== "not_installed") {
+      write("Authenticate Claude Code: claude mcp login doodle");
+    }
+  }
   if (command === "resume-install") {
     write("Restart Claude/Codex; in Codex approve the user hook once with /hooks.");
   }
